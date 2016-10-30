@@ -113,6 +113,56 @@ void BufMgr::allocBuf(FrameId & frame)
 	
 void BufMgr::readPage(File* file, const PageId pageNo, Page*& page)
 {
+    //in buffer pool
+    try
+    {
+        FrameId getFrameIdx;
+
+        //look up the index
+        hashTable -> lookup(file, pageNo, getFrameIdx);
+    
+        //get the frame
+        BufDesc getFrame = bufDescTable[getFrameIdx];
+  
+        //set ref bit
+        getFrame.refbit = true;
+
+        //increment pin count
+        getFrame.pinCnt = (getFrame.pinCnt + 1);
+
+        //return pointer to page
+        page = &(bufPool[getFrameIdx]);
+
+        //update frame
+        bufDescTable[getFrameIdx] = getFrame;
+    }
+
+    //not in buffer pool
+    catch(HashNotFoundException &e)
+    {
+        FrameId newFrameIdx;
+      
+        //get index of new buffer frame
+        allocBuf(newFrameIdx); 
+
+        //get page
+        Page getPage = file -> readPage(pageNo);
+
+        //insert page into hash table
+        hashTable -> insert(file, pageNo, newFrameIdx);
+
+        //get current frame
+        BufDesc currentFrame = bufDescTable[newFrameIdx];
+       
+        //set frame
+        currentFrame.Set(file, pageNo);
+
+        //put page into pool
+        bufPool[newFrameIdx] = getPage;
+        
+        //return
+        page = &(bufPool[newFrameIdx]);
+    }
 }
 
 
@@ -162,9 +212,7 @@ void BufMgr::allocPage(File* file, PageId &pageNo, Page*& page)
     FrameId getFrame;
     allocBuf(getFrame);
 
-    std::cout << "here\n";
     hashTable -> insert(file, pageNo, getFrame);
-    std::cout << "Not here\n";
     BufDesc currentFrame = bufDescTable[getFrame];
     currentFrame.Set(file, pageNo);
 
