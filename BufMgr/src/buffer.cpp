@@ -37,6 +37,20 @@ BufMgr::BufMgr(std::uint32_t bufs)
 
 BufMgr::~BufMgr() 
 {
+    for (std::uint32_t i = 0; i < numBufs; i++)
+    {
+        BufDesc* getBuffer = &(bufDescTable[i]);
+
+        //if dirty, write back
+        if(getBuffer -> dirty == true && getBuffer -> valid == true)
+        {
+            //flush file
+            getBuffer -> file -> writePage(bufPool[i]);
+        }
+    }
+
+    delete [] bufPool;
+    delete [] bufDescTable;
 }
 
 void BufMgr::advanceClock()
@@ -63,8 +77,6 @@ void BufMgr::allocBuf(FrameId & frame)
     int found = 0;
     int first = 1;
     int allPinned = 1;
-
-    std::cout << "here";
 
     //while not found
     while(found == 0)
@@ -132,7 +144,16 @@ void BufMgr::allocBuf(FrameId & frame)
 
                  else
                  {
-                     //we choose this frame to replace
+                     //if dirty, write
+                     if(getFrame.dirty == true)
+                     {
+                         //flush file
+                         getFrame.file -> writePage(bufPool[clockHand]);
+                     }
+
+                     hashTable -> remove(getFrame.file, getFrame.pageNo);
+
+                     //we choose this frame to evict
                      frame = clockHand;
                      found = 1;
                  }
@@ -172,69 +193,32 @@ void BufMgr::readPage(File* file, const PageId pageNo, Page*& page)
     //not in buffer pool
     catch(HashNotFoundException &e)
     {
+        //get page
+        Page getPage = file -> readPage(pageNo);
+ 
         FrameId newFrameIdx;
       
         //get index of new buffer frame
         allocBuf(newFrameIdx); 
 
-       if(bufDescTable[newFrameIdx].valid == false)
-       {
+        //insert page into hash table
+        hashTable -> insert(file, pageNo, newFrameIdx);
 
-            //get page
-            Page getPage = file -> readPage(pageNo);
-
-            //insert page into hash table
-            hashTable -> insert(file, pageNo, newFrameIdx);
-
-            //get current frame
-            BufDesc currentFrame = bufDescTable[newFrameIdx];
+        //get current frame
+        BufDesc currentFrame = bufDescTable[newFrameIdx];
        
-            //set frame
-            currentFrame.Set(file, pageNo);
+        //set frame
+        currentFrame.Set(file, pageNo);
 
-            //update frame
-            bufDescTable[newFrameIdx] = currentFrame;
+        //update frame
+        bufDescTable[newFrameIdx] = currentFrame;
 
-            //put page into pool
-            bufPool[newFrameIdx] = getPage;
+        //put page into pool
+        bufPool[newFrameIdx] = getPage;
         
-            //return
-            page = &(bufPool[newFrameIdx]);
+        //return
+        page = &(bufPool[newFrameIdx]);
 
-        }
-
-        else
-        {
-             //get page
-            Page getPage = file -> readPage(pageNo);
-
-            //get current frame
-            BufDesc currentFrame = bufDescTable[newFrameIdx];
-
-            //if dirty, write
-            if(currentFrame.dirty == true)
-            {
-                //flush file
-                currentFrame.file -> writePage(bufPool[newFrameIdx]);
-            }
-
-            hashTable -> remove(currentFrame.file, currentFrame.pageNo);
-
-            //insert page into hash table
-            hashTable -> insert(file, pageNo, newFrameIdx);
-
-            //set frame
-            currentFrame.Set(file, pageNo);
-
-            //update frame
-            bufDescTable[newFrameIdx] = currentFrame;
-
-            //put page into pool
-            bufPool[newFrameIdx] = getPage;
-
-            //return
-            page = &(bufPool[newFrameIdx]);
-        }
     }
 }
 
@@ -269,6 +253,43 @@ void BufMgr::unPinPage(File* file, const PageId pageNo, const bool dirty)
 
 void BufMgr::flushFile(const File* file) 
 {
+    for (std::uint32_t i = 0; i < numBufs; i++)
+    {
+        BufDesc* getBuffer = &(bufDescTable[i]);
+
+        //if files are equal
+        if(getBuffer -> file == file)
+        {
+            //invalid frame, throw exception
+            if(getBuffer -> valid == false)
+            {
+                 throw BadBufferException(i, getBuffer -> dirty, getBuffer -> valid, getBuffer -> refbit);
+            }
+
+            //if pinned throw exception
+            if(getBuffer -> pinCnt > 0)
+            {
+                throw PagePinnedException(file -> filename(), bufPool[i].page_number(), i);
+            }
+
+            //if dirty, write back
+            if(getBuffer -> dirty)
+            {
+                //flush file
+                getBuffer -> file -> writePage(bufPool[i]);
+                //file -> writePage(bufPool[i]);
+            }
+
+            //remove from table
+            hashTable -> remove(getBuffer -> file, getBuffer -> pageNo);
+
+            //clear
+            getBuffer -> Clear();
+
+            //update
+            bufDescTable[i] = *(getBuffer);
+        }
+    }
 }
 
 void BufMgr::allocPage(File* file, PageId &pageNo, Page*& page) 
@@ -282,53 +303,58 @@ void BufMgr::allocPage(File* file, PageId &pageNo, Page*& page)
     FrameId getFrame;
     allocBuf(getFrame);
 
-    //not replacing
-    if(bufDescTable[getFrame].valid != true)
-    {
+    hashTable -> insert(file, pageNo, getFrame);
+    BufDesc currentFrame = bufDescTable[getFrame];
+    currentFrame.Set(file, pageNo);
 
-        hashTable -> insert(file, pageNo, getFrame);
-        BufDesc currentFrame = bufDescTable[getFrame];
-        currentFrame.Set(file, pageNo);
+    //update frame information
+    bufDescTable[getFrame] = currentFrame;
 
-        //update frame information
-        bufDescTable[getFrame] = currentFrame;
-
-        //update page info
-        bufPool[getFrame] = emptyPage;
-        page = &(bufPool[getFrame]);
-    }
-
-    //replacing
-    else
-    {
-        //remove it
-        BufDesc replaceFrame = bufDescTable[getFrame];
-
-        //if replace frame has dirty bit set
-        if(replaceFrame.dirty == true)
-        {
-            //flush file
-            replaceFrame.file -> writePage(bufPool[getFrame]);
-        }
-
-        hashTable -> remove(replaceFrame.file, replaceFrame.pageNo);
-
-        hashTable -> insert(file, pageNo, getFrame);
-
-        replaceFrame.Set(file, pageNo);
-
-        //update frame information
-        bufDescTable[getFrame] = replaceFrame;
-
-        //update page Info
-        bufPool[getFrame] = emptyPage;
-        page = &(bufPool[getFrame]);
-    }
+    //update page info
+    bufPool[getFrame] = emptyPage;
+    page = &(bufPool[getFrame]);
 }
 
 void BufMgr::disposePage(File* file, const PageId PageNo)
 {
-    
+    //try to removepage from buffer
+    try
+    {
+        //this is the frame id
+        FrameId getFrameIdx;
+
+        //look up where the frame is
+        hashTable -> lookup(file, PageNo, getFrameIdx);
+
+        //getFrame
+        BufDesc getFrame = bufDescTable[getFrameIdx];
+
+        //if page is pinned, throw exception
+        if(getFrame.pinCnt > 0)
+        {
+            throw PagePinnedException(file -> filename(), PageNo, getFrameIdx);
+        }
+
+        else
+        {
+            //free frame
+            getFrame.Clear();
+
+            //update Frame
+            bufDescTable[getFrameIdx] = getFrame;
+
+            //remove from hash table
+            hashTable -> remove(file, PageNo);
+        }
+    }
+ 
+    catch(HashNotFoundException &e)
+    {
+        
+    }   
+
+    //remove page from file
+    file -> deletePage(PageNo);
 }
 
 void BufMgr::printSelf(void) 
