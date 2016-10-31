@@ -61,21 +61,33 @@ void BufMgr::allocBuf(FrameId & frame)
 
     //tell if unallocated frame
     int found = 0;
-    int first = 0;
-    int noPinned = 1;
+    int first = 1;
+    int allPinned = 1;
+
+    std::cout << "here";
 
     //while not found
     while(found == 0)
     {
-        if(found == 0 && first != 0 && noPinned == 1 && clockHand == currentFrameNo)
+        //if not found, all frames are pinned, not the first iteration, and 
+        //we did a full loop, then the buffer is full
+        if(clockHand == currentFrameNo)
         {
-            std::cout << "everything is pinned\n";
-
-            exit(0);
+            if(found == 0)
+            {
+                if(first != 1)
+                {
+                    if(allPinned == 1)
+                    {
+                        throw BufferExceededException();
+                    }
+                }  
+            }
         }
 
         //advance clock
         advanceClock();
+        first = 0;
 
         //get frame
         BufDesc getFrame = bufDescTable[clockHand];
@@ -94,7 +106,7 @@ void BufMgr::allocBuf(FrameId & frame)
             if(getFrame.pinCnt == 0)
             {
                 //there will be some frame to replace
-                noPinned = false;
+                allPinned = 0;
             }
 
             //check ref bit
@@ -125,10 +137,7 @@ void BufMgr::allocBuf(FrameId & frame)
                      found = 1;
                  }
              }
-
         }
-
-        first = 1;
 
     }
 }
@@ -196,6 +205,9 @@ void BufMgr::readPage(File* file, const PageId pageNo, Page*& page)
 
         else
         {
+             //get page
+            Page getPage = file -> readPage(pageNo);
+
             //get current frame
             BufDesc currentFrame = bufDescTable[newFrameIdx];
 
@@ -207,9 +219,6 @@ void BufMgr::readPage(File* file, const PageId pageNo, Page*& page)
             }
 
             hashTable -> remove(currentFrame.file, currentFrame.pageNo);
-
-            //get page
-            Page getPage = file -> readPage(pageNo);
 
             //insert page into hash table
             hashTable -> insert(file, pageNo, newFrameIdx);
@@ -243,8 +252,7 @@ void BufMgr::unPinPage(File* file, const PageId pageNo, const bool dirty)
 
     if(getFrame.pinCnt == 0)
     {
-        std::cout << "PNP error: page isn't pinned\n";
-        exit(0);
+        throw PageNotPinnedException(file -> filename(), pageNo, getFrameIdx);
     }
 
     //decrement pin
