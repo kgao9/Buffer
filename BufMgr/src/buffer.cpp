@@ -67,46 +67,69 @@ void BufMgr::allocBuf(FrameId & frame)
     //while not found
     while(found == 0)
     {
-
-        //no free frames
-        if(first != 0 && clockHand == currentFrameNo && noPinned == 1)
+        if(found == 0 && first != 0 && noPinned == 1 && clockHand == currentFrameNo)
         {
-            std::cout << "error\n";
+            std::cout << "everything is pinned\n";
+
             exit(0);
         }
 
-        //get current frame
-        BufDesc currentFrame = bufDescTable[clockHand];
-        
-        //currently pinned, advance clock
-        if(currentFrame.pinCnt > 0)
+        //advance clock
+        advanceClock();
+
+        //get frame
+        BufDesc getFrame = bufDescTable[clockHand];
+
+        //if frame is not valid, choose it
+        if(getFrame.valid == false)
         {
-            advanceClock();
+            frame = clockHand;
+            found = 1;
         }
 
-        //second case is ref bit is set
-        //if set, we want to unset it
-        else if(currentFrame.refbit == true)
-        {
-            //there exists some frame that wasn't pinned, so we never want to throw
-            //an exception
-            noPinned = 0;
-
-            //advance
-            currentFrame.refbit = false;
-            bufDescTable[clockHand] = currentFrame;
-            advanceClock();
-        }
-
-        //empty
+        //frame is valid
         else
         {
-            found = 1;
-            frame = clockHand;
-            advanceClock();
+            //check pinning
+            if(getFrame.pinCnt == 0)
+            {
+                //there will be some frame to replace
+                noPinned = false;
+            }
+
+            //check ref bit
+            if(getFrame.refbit == true)
+            {
+                 //set refbit
+                 getFrame.refbit = false;
+
+                 //update frame
+                 bufDescTable[clockHand] = getFrame;
+
+                 //continue to advance clock
+                 continue;
+             }
+
+             else
+             {
+                 //if pinned, continue
+                 if(getFrame.pinCnt > 0)
+                 {
+                     continue;
+                 }
+
+                 else
+                 {
+                     //we choose this frame to replace
+                     frame = clockHand;
+                     found = 1;
+                 }
+             }
+
         }
 
         first = 1;
+
     }
 }
 
@@ -145,23 +168,64 @@ void BufMgr::readPage(File* file, const PageId pageNo, Page*& page)
         //get index of new buffer frame
         allocBuf(newFrameIdx); 
 
-        //get page
-        Page getPage = file -> readPage(pageNo);
+       if(bufDescTable[newFrameIdx].valid == false)
+       {
 
-        //insert page into hash table
-        hashTable -> insert(file, pageNo, newFrameIdx);
+            //get page
+            Page getPage = file -> readPage(pageNo);
 
-        //get current frame
-        BufDesc currentFrame = bufDescTable[newFrameIdx];
+            //insert page into hash table
+            hashTable -> insert(file, pageNo, newFrameIdx);
+
+            //get current frame
+            BufDesc currentFrame = bufDescTable[newFrameIdx];
        
-        //set frame
-        currentFrame.Set(file, pageNo);
+            //set frame
+            currentFrame.Set(file, pageNo);
 
-        //put page into pool
-        bufPool[newFrameIdx] = getPage;
+            //update frame
+            bufDescTable[newFrameIdx] = currentFrame;
+
+            //put page into pool
+            bufPool[newFrameIdx] = getPage;
         
-        //return
-        page = &(bufPool[newFrameIdx]);
+            //return
+            page = &(bufPool[newFrameIdx]);
+
+        }
+
+        else
+        {
+            //get current frame
+            BufDesc currentFrame = bufDescTable[newFrameIdx];
+
+            //if dirty, write
+            if(currentFrame.dirty == true)
+            {
+                //flush file
+                currentFrame.file -> writePage(bufPool[newFrameIdx]);
+            }
+
+            hashTable -> remove(currentFrame.file, currentFrame.pageNo);
+
+            //get page
+            Page getPage = file -> readPage(pageNo);
+
+            //insert page into hash table
+            hashTable -> insert(file, pageNo, newFrameIdx);
+
+            //set frame
+            currentFrame.Set(file, pageNo);
+
+            //update frame
+            bufDescTable[newFrameIdx] = currentFrame;
+
+            //put page into pool
+            bufPool[newFrameIdx] = getPage;
+
+            //return
+            page = &(bufPool[newFrameIdx]);
+        }
     }
 }
 
@@ -173,8 +237,6 @@ void BufMgr::unPinPage(File* file, const PageId pageNo, const bool dirty)
 
     //look up where the frame is
     hashTable -> lookup(file, pageNo, getFrameIdx);
-
-    std::cout << "checking\n";
 
     //get that frame
     BufDesc getFrame = bufDescTable[getFrameIdx];
@@ -212,16 +274,48 @@ void BufMgr::allocPage(File* file, PageId &pageNo, Page*& page)
     FrameId getFrame;
     allocBuf(getFrame);
 
-    hashTable -> insert(file, pageNo, getFrame);
-    BufDesc currentFrame = bufDescTable[getFrame];
-    currentFrame.Set(file, pageNo);
+    //not replacing
+    if(bufDescTable[getFrame].valid != true)
+    {
 
-    //update frame information
-    bufDescTable[getFrame] = currentFrame;
+        hashTable -> insert(file, pageNo, getFrame);
+        BufDesc currentFrame = bufDescTable[getFrame];
+        currentFrame.Set(file, pageNo);
 
-    //update page info
-    bufPool[getFrame] = emptyPage;
-    page = &(bufPool[getFrame]);
+        //update frame information
+        bufDescTable[getFrame] = currentFrame;
+
+        //update page info
+        bufPool[getFrame] = emptyPage;
+        page = &(bufPool[getFrame]);
+    }
+
+    //replacing
+    else
+    {
+        //remove it
+        BufDesc replaceFrame = bufDescTable[getFrame];
+
+        //if replace frame has dirty bit set
+        if(replaceFrame.dirty == true)
+        {
+            //flush file
+            replaceFrame.file -> writePage(bufPool[getFrame]);
+        }
+
+        hashTable -> remove(replaceFrame.file, replaceFrame.pageNo);
+
+        hashTable -> insert(file, pageNo, getFrame);
+
+        replaceFrame.Set(file, pageNo);
+
+        //update frame information
+        bufDescTable[getFrame] = replaceFrame;
+
+        //update page Info
+        bufPool[getFrame] = emptyPage;
+        page = &(bufPool[getFrame]);
+    }
 }
 
 void BufMgr::disposePage(File* file, const PageId PageNo)
