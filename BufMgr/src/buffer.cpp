@@ -46,26 +46,21 @@ BufMgr::~BufMgr()
         {
             //flush file
             getBuffer -> file -> writePage(bufPool[i]);
+            bufStats.diskwrites++;
         }
     }
 
+    delete hashTable;
     delete [] bufPool;
     delete [] bufDescTable;
 }
 
 void BufMgr::advanceClock()
 {
-    //std::cout << "advancing";
-
-    if(clockHand == numBufs - 1)
-    {
-        clockHand = 0;
-    }
-
-    else
-    {
-        clockHand++;
-    }
+    //advance clock
+    //if goes out of bounds, cycle back
+    clockHand++;
+    clockHand = clockHand % numBufs;
 }
 
 void BufMgr::allocBuf(FrameId & frame) 
@@ -149,6 +144,7 @@ void BufMgr::allocBuf(FrameId & frame)
                      {
                          //flush file
                          getFrame.file -> writePage(bufPool[clockHand]);
+                         bufStats.diskwrites++;
                      }
 
                      hashTable -> remove(getFrame.file, getFrame.pageNo);
@@ -195,6 +191,7 @@ void BufMgr::readPage(File* file, const PageId pageNo, Page*& page)
     {
         //get page
         Page getPage = file -> readPage(pageNo);
+        bufStats.diskreads++;
  
         FrameId newFrameIdx;
       
@@ -277,7 +274,7 @@ void BufMgr::flushFile(const File* file)
             {
                 //flush file
                 getBuffer -> file -> writePage(bufPool[i]);
-                //file -> writePage(bufPool[i]);
+                bufStats.diskwrites++;
             }
 
             //remove from table
