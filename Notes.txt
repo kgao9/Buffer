@@ -1,0 +1,40 @@
+For each page P at index X in the buffer pool for X in {1...numbufs}
+There exists a frame in the BufDescTable which describes the Page Px.
+
+But how do you get the index X?
+
+You need the FrameId. This is where the hash table comes in. You
+use lookup for this. The hash table has f where (file, pageid) -> frameid.
+Usual case:
+    FrameId getIdx;
+    lookup(file*, pageNo, getIdx) where file*, pageNo are not null will save index in getIdx.
+    
+How to allocate a page into the pool:
+    get file to return an empty page
+    get its page number
+    allocate the buffer for it
+    insert into the hash table
+    set the frame
+    update page
+    
+evict page:
+    get frame
+    assume ref bit isn't set and pin Cnt > 0
+    if valid, check dirty bit
+    if dirty -> write back
+    clear frame
+    (you could remove the page from the pool, but you don't need to because the frame isn't valid anymore)
+    
+
+For allocBuf, we want to implement the flow chart in the PDF up to the step SET. SET corresponds to allocPage, not allocBuf.
+
+A note about header files.
+
+These are like interfaces in java - they give you what the method will do and their inputs and outputs, but they don't have
+implementation. This helps a lot because you don't need to read through 200 lines of code to find what you are looking for.
+
+Note about seg faults:
+    They are the devil. If you find one - good luck. You'll have to print out everything, and set break points. That's
+    usually the best way.
+    
+I hope these notes kind of help. The first few notes should be the most helpful as it helps you imagine what to do.    
