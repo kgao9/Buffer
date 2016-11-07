@@ -44,6 +44,7 @@ namespace badgerdb {
     }
 
     delete[] bufDescTable;
+    delete[] bufPool;
     delete hashTable;
   }
 
