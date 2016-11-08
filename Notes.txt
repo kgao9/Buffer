@@ -1,14 +1,8 @@
-For each page P at index X in the buffer pool for X in {1...numbufs}
-There exists a frame in the BufDescTable which describes the Page Px.
+Edited notes... blahb lahb bahblanlsdfnlsdf
+lsdnflknasfd
+asdlfkn
 
-But how do you get the index X?
 
-You need the FrameId. This is where the hash table comes in. You
-use lookup for this. The hash table has f where (file, pageid) -> frameid.
-Usual case:
-    FrameId getIdx;
-    lookup(file*, pageNo, getIdx) where file*, pageNo are not null will save index in getIdx.
-    
 How to allocate a page into the pool:
     get file to return an empty page
     get its page number
